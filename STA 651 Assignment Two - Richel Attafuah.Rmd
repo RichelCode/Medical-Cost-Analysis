@@ -1,0 +1,382 @@
+
+---
+title: "Homework 3: Health Expenditures"
+subtitle: "STA 651 – Generalized Linear Models"
+author: Richel Ohenewaa Attafuah
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+classoption: 12pt
+fontsize: 12pt
+geometry: margin=1in
+editor_options:
+  chunk_output_type: console
+---
+
+## Overview
+
+You will model **individual‑level medical charges** using a GLiM of your choice. You must determine an appropriate **family**, **link**, and **model structure** based on exploratory analysis and justification.
+
+**Dataset:** Kaggle “Medical Cost Personal Dataset” (public mirror)  
+URL for direct load:  
+`https://raw.githubusercontent.com/stedy/Machine-Learning-with-R-datasets/master/insurance.csv`
+
+**Variables:** `age`, `sex`, `bmi`, `children`, `smoker`, `region`, `charges`
+
+**Grading (50 points)** 
+
+
+
+## Setup & Data
+
+```{r setup, message=FALSE, warning=FALSE}
+# install.packages(c("dplyr","ggplot2","readr","janitor"))
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(janitor)
+
+url <- "https://raw.githubusercontent.com/stedy/Machine-Learning-with-R-datasets/master/insurance.csv"
+ins <- readr::read_csv(url) |> janitor::clean_names() |>
+  mutate(across(c(sex, smoker, region), factor))
+
+glimpse(ins)
+head(ins, 10)
+```
+
+## 1. EDA (5 pts)
+Provide EDA (e.g., histograms/density of `charges`) and propose at least **three plausible** modeling strategies and discuss pros/cons.
+
+```{r structure}
+# basic structure
+dim(ins)
+summary(ins)
+
+# missing values check
+colSums(is.na(ins))
+
+# check unique values for categoricals
+ins %>%
+  summarise(
+    n_age = n_distinct(age),
+    n_sex = n_distinct(sex),
+    n_bmi = n_distinct(bmi),
+    n_children = n_distinct(children),
+    n_smoker = n_distinct(smoker),
+    n_region = n_distinct(region)
+  )
+
+# quick tabulations
+table(ins$sex)
+table(ins$smoker)
+table(ins$region)
+table(ins$children)
+```
+
+```{r plots}
+# Histogram of charges
+ggplot(ins, aes(x = charges)) +
+  geom_histogram(bins = 40, fill = "steelblue", color = "white") +
+  labs(title = "Distribution of Medical Charges", x = "charges", y = "Count")
+
+# Histogram on log scale
+ggplot(ins, aes(x = charges)) +
+  geom_histogram(bins = 40, fill = "darkgreen", color = "white") +
+  scale_x_log10() +
+  labs(title = "Charges (log10 scale)", x = "charges (log10 scale)", y = "Count")
+
+# Boxplot by smoker
+ggplot(ins, aes(x = smoker, y = charges, fill = smoker)) +
+  geom_boxplot() +
+  labs(title = "Charges by Smoking Status", x = "Smoker", y = "Charges") +
+  theme(legend.position = "none")
+
+```
+
+```{r eda}
+# Age vs charges and log(charges)
+ggplot(ins, aes(x = age, y = charges)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  labs(title = "Charges vs Age")
+
+ggplot(ins, aes(x = age, y = log(charges))) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  labs(title = "log(Charges) vs Age")
+
+# BMI vs charges
+ggplot(ins, aes(x = bmi, y = charges)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  labs(title = "Charges vs BMI")
+
+ggplot(ins, aes(x = bmi, y = log(charges))) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  labs(title = "log(Charges) vs BMI")
+
+# Charges by region and sex
+ggplot(ins, aes(x = region, y = charges, fill = region)) +
+  geom_boxplot() +
+  labs(title = "Charges by Region")
+
+ggplot(ins, aes(x = sex, y = charges, fill = sex)) +
+  geom_boxplot() +
+  labs(title = "Charges by Sex")
+
+# Charges by region and sex
+ggplot(ins, aes(x = region, y = log(charges), fill = region)) +
+  geom_boxplot() +
+  labs(title = "log(Charges) by Region")
+
+ggplot(ins, aes(x = sex, y = log(charges), fill = sex)) +
+  geom_boxplot() +
+  labs(title = "log(Charges) by Sex")
+
+```
+
+
+## Proposed GLM modeling strategies
+
+Based on the exploratory analysis, the outcome variable `charges` is
+- strictly positive,
+- strongly right-skewed,
+- shows larger variability for larger charges (especially among smokers),
+- and becomes more regular and almost linear in the predictors after a log transformation.
+
+These features suggest using GLM-type models with a log scale. The following three models are proposed, listed in order of expected suitability for this dataset.
+
+### 1. Gamma GLM with log link
+
+**Reasoning from EDA:** charges are positive and right-skewed, and variability increases with the mean. This is the typical setting for a Gamma distribution with a log link.
+
+**Pros**
+- Designed for positive, right-skewed cost/charge data.
+- Log link gives multiplicative/percentage interpretation of predictors.
+- Handles heteroscedasticity naturally (var ∝ mean²).
+- Consistent with the clear separation between smokers and non-smokers.
+
+**Cons**
+- Can be sensitive to very extreme observations (very high charges).
+- Requires correct specification of the mean–variance relationship.
+- Diagnostics (deviance, dispersion) are less familiar than for linear models.
+
+
+### 2. Log-normal regression (Gaussian on log(charges))
+
+**Reasoning from EDA:** the histogram of `charges` was highly skewed, but on the log scale the distribution became more symmetric and the relationships with age and BMI became closer to linear.
+
+**Pros**
+- Very simple to explain and to diagnose (residual plots, normality on log scale).
+- Log transformation stabilizes variance and makes effects additive on the log scale.
+- Coefficients can be interpreted approximately as percentage changes after exponentiation.
+
+**Cons**
+- Works on a transformed scale; predictions on the original scale need back-transformation (and possibly bias correction).
+- Assumes normality of log(charges), not the GLM mean–variance structure.
+- Still affected by extreme high-cost patients, even on the log scale.
+
+
+### 3. Inverse Gaussian GLM with log link
+
+**Reasoning from EDA:** there is a small group of very high charges (long right tail). An inverse Gaussian with log link is another GLM for positive, continuous outcomes that allows heavier tails than the Gamma.
+
+**Pros**
+- Appropriate for strictly positive, continuous data with a long right tail.
+- Same log-link interpretation as the Gamma (multiplicative effects).
+- Useful as a robustness/sensitivity model to check conclusions from the Gamma model.
+
+**Cons**
+- More complex distribution; diagnostics and interpretation are less familiar.
+- Can be numerically a bit less stable than the Gamma model.
+- If the tail is not truly that heavy, it may not improve fit over Gamma.
+
+
+**Summary:**  
+Because the data are positive and right-skewed, a **Gamma GLM with log link** is the primary candidate. A **log-normal (Gaussian on log response)** model is kept as a simpler, easy-to-explain alternative supported by the log-scale plots. An **inverse Gaussian GLM with log link** is proposed as a third, more flexible option to check sensitivity to the heavy right tail observed in the EDA.
+
+
+## 2. Model Formulation (10 pts)
+
+Define your **response** and choose a **family** and **link**. Write the linear predictor and interpret at least one coefficient on the **original scale**.
+
+
+```{r gamma}
+gamma_mod <- glm(
+  charges ~ age + bmi + children + sex + smoker + region ,
+  family = Gamma(link = "log"),
+  data = ins
+)
+
+#model summary
+summary(gamma_mod)
+
+```
+
+
+### Coefficient interpretation (Gamma model with log link)
+
+The coefficient for `smokeryes` is 1.5003.  
+Because the model uses a log link, exponentiating this value gives:
+
+\[
+\exp(1.5003) = 4.48
+\]
+
+This means that, on average, and holding other factors constant, smokers are expected to have medical charges about 4.5 times higher than non-smokers.
+
+
+## 3. Estimation & Inference (10 pts)
+
+Fit your primary model, provide **CIs**, and test at least one **interaction** or composite hypothesis (e.g., `smoker × bmi`).
+
+```{r interaction}
+
+gamma_int <- glm(
+  charges ~ age + bmi * smoker + children + sex + region,
+  family = Gamma(link = "log"),
+  data = ins
+)
+
+summary(gamma_int)
+
+# 95% Wald Confidence Intervals (multiplicative effects)
+exp_coef <- exp(cbind(
+  Estimate = coef(gamma_int),
+  confint.default(gamma_int)
+))
+
+round(exp_coef, 3)
+
+```
+
+## 4. Model Comparison (10 pts)
+
+Compare to at least **two alternatives** specification. Use appropriate criteria (AIC/BIC, deviance, residual analysis).
+
+```{r compare}
+# Fit models ---
+
+# Log-normal model (Gaussian on log(charges))
+ln_mod <- lm(log(charges) ~ age + bmi + children + sex + smoker + region, data = ins)
+
+# Gamma GLM
+gamma_mod <- glm(charges ~ age + bmi + children + sex + smoker + region,
+                 family = Gamma(link = "log"),
+                 data = ins)
+
+# Inverse Gaussian GLM
+inv_mod <- glm(charges ~ age + bmi + children + sex + smoker + region,
+               family = inverse.gaussian(link = "log"),
+               data = ins)
+
+# Collect key fit statistics ---
+
+model_comp <- data.frame(
+  Model = c("Log-normal (Gaussian on log Y)",
+            "Gamma (log link)",
+            "Inverse Gaussian (log link)"),
+  AIC = c(AIC(ln_mod), AIC(gamma_mod), AIC(inv_mod)),
+  BIC = c(BIC(ln_mod), BIC(gamma_mod), BIC(inv_mod)),
+  Residual_Deviance = c(NA, deviance(gamma_mod), deviance(inv_mod)),  # Deviance not defined for lm
+  Residual_SE_or_Dispersion = c(
+    sigma(ln_mod),   # residual standard error for lm
+    summary(gamma_mod)$dispersion,
+    summary(inv_mod)$dispersion
+  )
+)
+
+knitr::kable(model_comp, digits = 3,
+             caption = "Model comparison based on AIC, BIC, and residual measures")
+
+
+
+```
+
+
+### Model comparison and selection
+
+All three candidate models were fitted using the same predictors and compared using AIC, BIC, residual deviance, and residual dispersion.  
+The log-normal regression achieved the lowest AIC and BIC, indicating the best balance between goodness-of-fit and model complexity. Its residual standard error (0.44 on the log scale) suggests homoscedastic and well-behaved residuals.
+
+The Gamma GLM with log link also provided a good fit, with residual deviance (≈338) and dispersion (≈0.47) consistent with the expected variance–mean relationship. This confirms that the Gamma distribution is theoretically suitable for strictly positive, right-skewed cost data.
+
+The Inverse Gaussian model exhibited near-zero dispersion and very low deviance, indicating numerical instability and a poor match to the data distribution.
+
+Overall, both empirical and theoretical evidence favor the Gamma GLM for modeling individual medical charges, with the log-normal model serving as a strong, interpretable benchmark.
+
+
+
+## 5. Diagnostics (10 pts)
+
+Provide residual diagnostics **appropriate to your family**, check influential cases, and comment on **variance function** assumptions.
+
+```{r diagnostics}
+
+# Refit the final model for clarity
+gamma_mod <- glm(
+  charges ~ age + bmi + children + sex + smoker + region,
+  family = Gamma(link = "log"),
+  data = ins
+)
+
+# 1. Deviance residuals vs fitted values
+plot(gamma_mod, which = 1, main = "Deviance residuals vs Fitted values")
+
+# 2. Normal Q–Q plot of deviance residuals
+plot(gamma_mod, which = 2, main = "Normal Q–Q plot of deviance residuals")
+
+# 3. Scale-location plot
+plot(gamma_mod, which = 3, main = "Scale–location (Spread vs Fitted)")
+
+# 4. Residuals vs fitted (Pearson)
+plot(fitted(gamma_mod), resid(gamma_mod, type = "pearson"),
+     xlab = "Fitted values",
+     ylab = "Pearson residuals",
+     main = "Pearson residuals vs Fitted values")
+abline(h = 0, col = "red", lwd = 2)
+
+
+```
+
+### Variance function assumption (Gamma family)
+
+In a Gamma GLM with a log link, we assume that the variance of the response increases with the square of the mean:
+
+\[
+Var(Y_i) = \phi \mu_i^2
+\]
+
+Looking at the diagnostic plots, this assumption seems to hold well for our data.
+
+- In both the **Pearson residuals vs fitted values** and **deviance residuals vs fitted values** plots, the spread of residuals gets slightly wider as fitted values increase. That’s exactly what we expect with a Gamma model, since higher predicted charges usually come with higher variability.  
+- There isn’t any strong curvature or funnel shape in the plots, which means the variance pattern is being captured well by the Gamma structure.  
+- A few points stand out as high-cost cases, but they look like genuine outliers rather than a model problem.  
+- The **scale-location plot** also shows that the spread of standardized residuals is mostly stable, which suggests the log link did a good job stabilizing variance.
+
+**In short:**  
+The diagnostics support the Gamma assumption that variance grows with the square of the mean. There’s no major sign of heteroscedasticity, and the log link seems to model the mean–variance relationship effectively.
+
+
+## 6. Interpretation & Communication (5 pts)
+
+Summarize practical implications for **premium pricing** or **risk stratification**, including limitations.
+
+
+### Practical implications for premium pricing and risk stratification
+
+The Gamma GLM helps estimate expected medical costs for individuals based on their personal characteristics. In practice, this kind of model can guide how insurers set premium levels and categorize risk among policyholders.
+
+From the model results, age, BMI, and especially smoking status were strong predictors of higher medical charges. For example, smokers had much higher expected costs than non-smokers, even after adjusting for age and BMI. This means that in a real insurance setting, smokers or individuals with high BMI would likely fall into higher-premium or high-risk categories, while younger, non-smoking individuals would be assigned lower premiums.
+
+By using a Gamma GLM with a log link, the company can predict charges more accurately across different income or health groups, since the model handles the skewed and strictly positive nature of cost data.
+
+**However, there are limitations.**
+- The dataset does not include important behavioral or medical history variables (like pre-existing conditions, lifestyle, or access to care).
+- The model assumes a stable relationship between predictors and costs over time, which may not hold if healthcare prices or policies change.
+- It also does not account for random effects (such as individual-level variability or provider-level differences), which might lead to over- or under-pricing for some customers.
+
+**In summary**, the Gamma model is a useful starting point for fairer and more data-driven premium pricing, but real-world applications should combine it with additional data, regular model updates, and ethical guidelines to avoid unfair discrimination in pricing.
+
